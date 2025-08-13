@@ -1,72 +1,78 @@
-"""
-This module takes care of starting the API Server, Loading the DB and Adding the endpoints
-"""
-import os
-from flask import Flask, request, jsonify, url_for, send_from_directory
-from flask_migrate import Migrate
-from flask_swagger import swagger
-from api.utils import APIException, generate_sitemap
-from api.models import db
-from api.routes import api
-from api.admin import setup_admin
-from api.commands import setup_commands
+from flask import Flask, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
+from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
+from datetime import timedelta
 
-# from models import Person
-
-ENV = "development" if os.getenv("FLASK_DEBUG") == "1" else "production"
-static_file_dir = os.path.join(os.path.dirname(
-    os.path.realpath(__file__)), '../dist/')
 app = Flask(__name__)
-app.url_map.strict_slashes = False
 
-# database condiguration
-db_url = os.getenv("DATABASE_URL")
-if db_url is not None:
-    app.config['SQLALCHEMY_DATABASE_URI'] = db_url.replace(
-        "postgres://", "postgresql://")
-else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:////tmp/test.db"
+# Configuración de la base de datos (SQLite en este caso, por simplicidad)
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///project.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+db = SQLAlchemy(app)
 
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-MIGRATE = Migrate(app, db, compare_type=True)
-db.init_app(app)
+# Configuración de JWT
+app.config["JWT_SECRET_KEY"] = "tu-clave-secreta-muy-larga-y-aleatoria"
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1) # El token expira en 1 hora
+jwt = JWTManager(app)
 
-# add the admin
-setup_admin(app)
+# Modelo de usuario para la base de datos
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password = db.Column(db.String(80), nullable=False) # Nota: En un proyecto real, la contraseña debe estar hasheada.
+    
+    def __repr__(self):
+        return f'<User {self.email}>'
 
-# add the admin
-setup_commands(app)
+# Puntos de conexión (endpoints)
 
-# Add all endpoints form the API with a "api" prefix
-app.register_blueprint(api, url_prefix='/api')
+# Endpoint para registrar un nuevo usuario
+@app.route("/signup", methods=["POST"])
+def signup():
+    email = request.json.get("email", None)
+    password = request.json.get("password", None)
 
-# Handle/serialize errors like a JSON object
+    if not email or not password:
+        return jsonify({"msg": "Email y contraseña son requeridos"}), 400
 
+    if User.query.filter_by(email=email).first():
+        return jsonify({"msg": "El email ya existe"}), 409
 
-@app.errorhandler(APIException)
-def handle_invalid_usage(error):
-    return jsonify(error.to_dict()), error.status_code
+    # Aquí se crea un usuario simple, en la vida real, hashearías la contraseña
+    new_user = User(email=email, password=password)
+    db.session.add(new_user)
+    db.session.commit()
 
-# generate sitemap with all your endpoints
+    return jsonify({"msg": "Usuario creado exitosamente"}), 201
 
+# Endpoint para iniciar sesión y obtener el token JWT
+@app.route("/token", methods=["POST"])
+def create_token():
+    email = request.json.get("email", None)
+    password = request.json.get("password", None)
 
-@app.route('/')
-def sitemap():
-    if ENV == "development":
-        return generate_sitemap(app)
-    return send_from_directory(static_file_dir, 'index.html')
+    user = User.query.filter_by(email=email).first()
 
-# any other endpoint will try to serve it like a static file
-@app.route('/<path:path>', methods=['GET'])
-def serve_any_other_file(path):
-    if not os.path.isfile(os.path.join(static_file_dir, path)):
-        path = 'index.html'
-    response = send_from_directory(static_file_dir, path)
-    response.cache_control.max_age = 0  # avoid cache memory
-    return response
+    if user is None or user.password != password: # Validación simple
+        return jsonify({"msg": "Email o contraseña incorrectos"}), 401
 
+    access_token = create_access_token(identity=user.id)
+    return jsonify(access_token=access_token), 200
 
-# this only runs if `$ python src/main.py` is executed
+# Endpoint para una página privada (requiere token JWT)
+@app.route("/private", methods=["GET"])
+@jwt_required()
+def private():
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    
+    return jsonify(
+        id=user.id,
+        email=user.email,
+        message="¡Hola! Esta es una página privada."
+    ), 200
+
 if __name__ == '__main__':
-    PORT = int(os.environ.get('PORT', 3001))
-    app.run(host='0.0.0.0', port=PORT, debug=True)
+    with app.app_context():
+        db.create_all() # Esto crea la tabla de usuarios si no existe
+    app.run(debug=True)
