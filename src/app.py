@@ -1,78 +1,136 @@
-from flask import Flask, jsonify, request
-from flask_sqlalchemy import SQLAlchemy
-from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
-from datetime import timedelta
+import os
+from flask import Flask, request, jsonify, url_for
+from flask_migrate import Migrate
+from flask_cors import CORS
+from utils import APIException, generate_sitemap
+from admin import setup_admin
+from models import db, User
+from flask_bcrypt import Bcrypt
+from flask_jwt_extended import create_access_token, JWTManager
+from flask_jwt_extended import jwt_required, get_jwt_identity
 
+
+
+# Instancia de la aplicación y la configuración
+ENV = os.getenv("FLASK_ENV")
+static_file_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../public/')
 app = Flask(__name__)
+app.url_map.strict_slashes = False
 
-# Configuración de la base de datos (SQLite en este caso, por simplicidad)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///project.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-db = SQLAlchemy(app)
+# Configuración de la base de datos
+db_url = os.getenv("DATABASE_URL")
+if db_url is not None:
+    app.config['SQLALCHEMY_DATABASE_URI'] = db_url.replace("postgres://", "postgresql://")
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = "sqlite:////tmp/test.db"
+
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+MIGRATE = Migrate(app, db, compare_type = True)
+db.init_app(app)
+
+# Habilita CORS
+CORS(app)
+
+# Configuración del administrador
+setup_admin(app)
+
+# Inicializa Flask-Bcrypt
+bcrypt = Bcrypt(app)
 
 # Configuración de JWT
-app.config["JWT_SECRET_KEY"] = "tu-clave-secreta-muy-larga-y-aleatoria"
-app.config["JWT_ACCESS_TOKEN_EXPIRES"] = timedelta(hours=1) # El token expira en 1 hora
+app.config["JWT_SECRET_KEY"] = "super-secret-key"
 jwt = JWTManager(app)
 
-# Modelo de usuario para la base de datos
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(80), nullable=False) # Nota: En un proyecto real, la contraseña debe estar hasheada.
-    
-    def __repr__(self):
-        return f'<User {self.email}>'
 
-# Puntos de conexión (endpoints)
+# Manejo de errores
+@app.errorhandler(APIException)
+def handle_invalid_usage(error):
+    return jsonify(error.to_dict()), error.status_code
 
-# Endpoint para registrar un nuevo usuario
-@app.route("/signup", methods=["POST"])
-def signup():
-    email = request.json.get("email", None)
-    password = request.json.get("password", None)
+@app.route('/')
+def sitemap():
+    if ENV == "development":
+        return generate_sitemap(app)
+    return send_from_directory(static_file_dir, 'index.html')
+
+# ----------------- RUTA DE REGISTRO -----------------
+@app.route('/signup', methods=['POST'])
+def handle_signup():
+    body = request.get_json()
+    email = body.get('email')
+    password = body.get('password')
 
     if not email or not password:
-        return jsonify({"msg": "Email y contraseña son requeridos"}), 400
+        return jsonify({"msg": "Email and password are required"}), 400
 
-    if User.query.filter_by(email=email).first():
-        return jsonify({"msg": "El email ya existe"}), 409
+    user_exists = User.query.filter_by(email=email).first()
+    if user_exists:
+        return jsonify({"msg": "Email already exists"}), 409
 
-    # Aquí se crea un usuario simple, en la vida real, hashearías la contraseña
-    new_user = User(email=email, password=password)
-    db.session.add(new_user)
-    db.session.commit()
+    try:
+        hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
 
-    return jsonify({"msg": "Usuario creado exitosamente"}), 201
+        new_user = User(email=email, password=hashed_password, is_active=True)
 
-# Endpoint para iniciar sesión y obtener el token JWT
+        db.session.add(new_user)
+        db.session.commit()
+
+        response_body = {
+            "msg": "Usuario registrado exitosamente"
+        }
+        return jsonify(response_body), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"msg": f"Error al registrar usuario: {e}"}), 500
+
+# ----------------- RUTA DE INICIO DE SESIÓN -----------------
+
 @app.route("/token", methods=["POST"])
 def create_token():
+
     email = request.json.get("email", None)
     password = request.json.get("password", None)
 
     user = User.query.filter_by(email=email).first()
 
-    if user is None or user.password != password: # Validación simple
-        return jsonify({"msg": "Email o contraseña incorrectos"}), 401
+    if user is None:
+        return jsonify({"msg": "Bad username or password"}), 401
+
+    if not bcrypt.check_password_hash(user.password, password):
+        return jsonify({"msg": "Bad username or password"}), 401
 
     access_token = create_access_token(identity=user.id)
-    return jsonify(access_token=access_token), 200
+    
+    return jsonify({
+        "token": access_token,
+        "user": user.serialize()
+    })
 
-# Endpoint para una página privada (requiere token JWT)
+# ----------------- INICIO: RUTA PRIVADA -----------------
+
 @app.route("/private", methods=["GET"])
 @jwt_required()
-def private():
+def get_private_data():
     current_user_id = get_jwt_identity()
     user = User.query.get(current_user_id)
     
-    return jsonify(
-        id=user.id,
-        email=user.email,
-        message="¡Hola! Esta es una página privada."
-    ), 200
+    if user:
+        return jsonify({
+            "msg": f"¡Hola {user.email}! Esto es un mensaje privado. Solo lo ves porque estás autenticado.",
+            "user": user.serialize()
+        }), 200
+    
+    return jsonify({"msg": "User not found"}), 404
+
+
+
+@app.route('/users', methods=['GET'])
+def get_all_users():
+    users = User.query.all()
+    user_list = [user.serialize() for user in users]
+    return jsonify(user_list), 200
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all() # Esto crea la tabla de usuarios si no existe
-    app.run(debug=True)
+    PORT = int(os.environ.get('PORT', 3000))
+    app.run(host='0.0.0.0', port=PORT, debug=True)
