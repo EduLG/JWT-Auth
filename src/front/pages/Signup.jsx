@@ -1,10 +1,10 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom"; // Importa useNavigate para la navegación
+import { useNavigate } from "react-router-dom";
 
 const Signup = () => {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const navigate = useNavigate(); // Hook para la navegación programática
+    const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -22,7 +22,7 @@ const Signup = () => {
 
         if (response.ok) {
             alert("¡Registro exitoso! Ahora puedes iniciar sesión.");
-            navigate("/login"); // Redirige al usuario a la página de inicio de sesión
+            navigate("/login"); 
         } else {
             const error = await response.json();
             alert(error.msg);
