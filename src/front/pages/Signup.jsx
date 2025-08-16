@@ -1,42 +1,57 @@
-import React, { useState, useContext } from "react";
-import { useNavigate } from "react-router-dom";
-import { Context } from "../store/appContext";
+import React, { useState } from "react";
+import { useNavigate } from "react-router-dom"; // Importa useNavigate para la navegación
 
 const Signup = () => {
-    const { store, actions } = useContext(Context);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const navigate = useNavigate();
+    const navigate = useNavigate(); // Hook para la navegación programática
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const success = await actions.signup(email, password);
-        if (success) {
-            navigate("/login");
+
+        const response = await fetch("http://localhost:5000/signup", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                email: email,
+                password: password,
+            }),
+        });
+
+        if (response.ok) {
+            alert("¡Registro exitoso! Ahora puedes iniciar sesión.");
+            navigate("/login"); // Redirige al usuario a la página de inicio de sesión
         } else {
-            alert("Error al registrarse. El email podría ya estar en uso.");
+            const error = await response.json();
+            alert(error.msg);
         }
     };
 
     return (
-        <div className="signup-container">
-            <h2>Registro</h2>
-            <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit}>
+            <h1>Formulario de Registro</h1>
+            <div>
+                <label>Email:</label>
                 <input
                     type="email"
-                    placeholder="Email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    required
                 />
+            </div>
+            <div>
+                <label>Contraseña:</label>
                 <input
                     type="password"
-                    placeholder="Contraseña"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    required
                 />
-                <button type="submit">Registrarme</button>
-            </form>
-        </div>
+            </div>
+            <button type="submit">Registrarse</button>
+        </form>
     );
 };
 
