@@ -1,42 +1,59 @@
-import React, { useState, useContext } from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Context } from "../store/appContext";
 
 const Login = () => {
-    const { store, actions } = useContext(Context);
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const success = await actions.login(email, password);
-        if (success) {
+
+        const response = await fetch("http://localhost:5000/token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                email: email,
+                password: password,
+            }),
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            console.log("Token recibido:", data.token);
+            sessionStorage.setItem("jwt-token", data.token);
             navigate("/private");
         } else {
-            alert("Error al iniciar sesión. Por favor, verifica tus credenciales.");
+            const error = await response.json();
+            alert(error.msg);
         }
     };
 
     return (
-        <div className="login-container">
-            <h2>Inicio de Sesión</h2>
-            <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit}>
+            <h1>Inicio de Sesión</h1>
+            <div>
+                <label>Email:</label>
                 <input
                     type="email"
-                    placeholder="Email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    required
                 />
+            </div>
+            <div>
+                <label>Contraseña:</label>
                 <input
                     type="password"
-                    placeholder="Contraseña"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
+                    required
                 />
-                <button type="submit">Iniciar Sesión</button>
-            </form>
-        </div>
+            </div>
+            <button type="submit">Iniciar Sesión</button>
+        </form>
     );
 };
 

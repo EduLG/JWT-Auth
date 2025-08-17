@@ -1,28 +1,51 @@
-import React, { useContext, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Context } from "../store/appContext";
 
 const Private = () => {
-    const { store, actions } = useContext(Context);
-    const [message, setMessage] = useState("Cargando...");
+    const [message, setMessage] = useState("");
     const navigate = useNavigate();
 
     useEffect(() => {
         const token = sessionStorage.getItem("jwt-token");
+
         if (!token) {
-            // Si no hay token, redirigir al login
             navigate("/login");
-        } else {
-            // Si hay token, llamar al backend para obtener el mensaje privado
-            actions.getPrivateMessage();
+            return;
         }
-    }, [navigate]); // navigate se incluye como dependencia para evitar warnings
+
+        const fetchPrivateData = async () => {
+            const response = await fetch("http://localhost:5000/private", {
+                method: "GET",
+                headers: {
+                    "Content-Type": "application/json",
+                    "Authorization": `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setMessage(data.msg);
+            } else {
+                sessionStorage.removeItem("jwt-token");
+                navigate("/login");
+            }
+        };
+
+        fetchPrivateData();
+    }, [navigate]);
 
     return (
-        <div className="private-container">
-            <h2>Página Privada</h2>
-            <p>{store.message}</p>
-            <button onClick={() => actions.logout(navigate)}>Cerrar Sesión</button>
+        <div className="text-center mt-5">
+            {message ? (
+                <>
+                    <h1>{message}</h1>
+                    <p>
+                        ¡Has accedido a la página privada con éxito! 🎉
+                    </p>
+                </>
+            ) : (
+                <p>Cargando datos privados...</p>
+            )}
         </div>
     );
 };

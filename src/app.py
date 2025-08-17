@@ -1,18 +1,17 @@
 import os
-from flask import Flask, request, jsonify, url_for
+from flask import Flask, request, jsonify, url_for, send_from_directory # Se añade send_from_directory
 from flask_migrate import Migrate
 from flask_cors import CORS
-from utils import APIException, generate_sitemap
-from admin import setup_admin
-from models import db, User
+from api.utils import APIException, generate_sitemap
+from api.admin import setup_admin
+from api.models import db, User
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import create_access_token, JWTManager
 from flask_jwt_extended import jwt_required, get_jwt_identity
 
 
-
 # Instancia de la aplicación y la configuración
-ENV = os.getenv("FLASK_ENV")
+ENV = os.getenv("FLASK_ENV", "development") # Valor por defecto
 static_file_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), '../public/')
 app = Flask(__name__)
 app.url_map.strict_slashes = False
@@ -38,7 +37,7 @@ setup_admin(app)
 bcrypt = Bcrypt(app)
 
 # Configuración de JWT
-app.config["JWT_SECRET_KEY"] = "super-secret-key"
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "super-secret-key") # Valor por defecto
 jwt = JWTManager(app)
 
 
@@ -69,17 +68,13 @@ def handle_signup():
 
     try:
         hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
-
         new_user = User(email=email, password=hashed_password, is_active=True)
-
         db.session.add(new_user)
         db.session.commit()
-
         response_body = {
             "msg": "Usuario registrado exitosamente"
         }
         return jsonify(response_body), 201
-
     except Exception as e:
         db.session.rollback()
         return jsonify({"msg": f"Error al registrar usuario: {e}"}), 500
@@ -88,20 +83,18 @@ def handle_signup():
 
 @app.route("/token", methods=["POST"])
 def create_token():
-
-    email = request.json.get("email", None)
-    password = request.json.get("password", None)
+    body = request.get_json() # Se cambia a request.get_json()
+    email = body.get("email", None)
+    password = body.get("password", None)
 
     user = User.query.filter_by(email=email).first()
 
     if user is None:
         return jsonify({"msg": "Bad username or password"}), 401
-
     if not bcrypt.check_password_hash(user.password, password):
         return jsonify({"msg": "Bad username or password"}), 401
 
     access_token = create_access_token(identity=user.id)
-    
     return jsonify({
         "token": access_token,
         "user": user.serialize()
@@ -114,16 +107,14 @@ def create_token():
 def get_private_data():
     current_user_id = get_jwt_identity()
     user = User.query.get(current_user_id)
-    
     if user:
         return jsonify({
             "msg": f"¡Hola {user.email}! Esto es un mensaje privado. Solo lo ves porque estás autenticado.",
             "user": user.serialize()
         }), 200
-    
     return jsonify({"msg": "User not found"}), 404
 
-
+# ----------------- FIN: RUTAS DE AUTENTICACIÓN -----------------
 
 @app.route('/users', methods=['GET'])
 def get_all_users():
